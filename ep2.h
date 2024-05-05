@@ -2,28 +2,57 @@
 #include <time.h>
 #include <sys/time.h>
 #include <unistd.h>
-
+#include <pthread.h>
+#include <stdbool.h>
+#include <stdlib.h>
+ 
+ 
+ 
+// Structs
 typedef struct {
-  unsigned int posicao;
-  unsigned int voltas;
+  int id;
+  int posicao_x, posicao_y;
+  int velocidade;
+  int voltas, colocacao;
+  bool na_corrida;
+  bool quebrou;
+  bool ganhou;
+  bool atualizou_posicao, atualizou_velocidade;
 } Ciclista;
 
-typedef struct {
-  unsigned int tamanho;
-  unsigned int num_lanes;
-  unsigned int **matriz;
-} Pista;
+
 
 // Variáveis globais
-// unsigned int g_num_ciclistas;
-// unsigned int g_num_ciclistas_vivos;
-// unsigned int g_tamanho_pista;
-// struct timeval tempo_inicio, tempo_atual;
-// Pista* pista;
-// Ciclista** ciclistas;
+int g_num_ciclistas;
+int g_num_voltas_completas;
+int g_tamanho_pista;
+long long int clock_ms;
+int **pista;
+Ciclista** ciclistas;
+pthread_t *threads;
+pthread_mutex_t** mutex_pista;
+// pthread_mutex_t mutex_pista;
+pthread_mutex_t mutex_ciclistas;
+pthread_barrier_t barreira_1, barreira_2;
+
+
 
 // Protótipos
-// Pista* cria_pista();
-// Ciclista** cria_threads();
-double atualiza_tempo(struct timeval, struct timeval);
-// int imprime_corrida();
+// void cria_mutex_pista(int);
+// void destroi_mutex_pista(int);
+// void cria_mutex_ciclistas(int);
+// void destroi_mutex_ciclistas(int);
+void cria_pista(int);
+void destroi_pista(int);
+void cria_ciclistas(int);
+Ciclista* cria_ciclista(int);
+void destroi_ciclistas(int);
+void cria_threads(int);
+void f_ciclista(void*);
+void atualiza_posicao(int, int, int);
+bool avanca_pra_frente(int, int, int);
+bool ultrapassa_por_cima(int, int, int);
+bool ultrapassa_por_baixo(int, int, int);
+void atualiza_velocidade(int);
+bool quebra_ciclista();
+void imprime_corrida(int, int*, int*);
