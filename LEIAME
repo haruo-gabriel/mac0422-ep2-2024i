@@ -1,2 +1,2 @@
 Como compilar:
-gcc -o ep2.c -lpthread ep2
+gcc -o ep2.out ep2.c -lpthread 

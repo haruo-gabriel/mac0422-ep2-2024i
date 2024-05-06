@@ -1,4 +1,3 @@
 file ./ep2.out
-set args 20 1 -debug
-b atualiza_posicao
+set args 20 5 -debug
 run

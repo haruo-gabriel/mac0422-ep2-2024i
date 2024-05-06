@@ -1,8 +1,8 @@
 CC = gcc
-CFLAGS = -Wall -lpthread
+CFLAGS = -g -Wall -lpthread
 SRC = ep2.c
 DEPS = ep2.h
-EXEC = ep2
+EXEC = ep2.out
 
 $(EXEC): $(SRC) $(DEPS)
 	$(CC) -o $@ $(SRC) $(CFLAGS)
