@@ -1,25 +1,16 @@
 #include "ep2.h"
 
 void cria_mutex_pista(int tamanho_pista) {
-  // Cria uma matriz mutex para a pista
-  mutex_pista = (pthread_mutex_t**) malloc(tamanho_pista * sizeof(pthread_mutex_t*));
-  for (int i = 0; i < 10; i++) {
-    mutex_pista[i] = (pthread_mutex_t*) malloc(10 * sizeof(pthread_mutex_t));
-    for (int j = 0; j < 10; j++) {
-      pthread_mutex_init(&mutex_pista[i][j], NULL);
-    }
-  }
+  mutex_pista = (pthread_mutex_t*) malloc(sizeof(pthread_mutex_t) * tamanho_pista);
   return;
 }
 
 void destroi_mutex_pista(int tamanho_pista) {
-  for (int i = 0; i < 10; i++) {
-    for (int j = 0; j < tamanho_pista; j++) {
-      pthread_mutex_destroy(&mutex_pista[i][j]);
-    }
-    free(mutex_pista[i]);
+  for (int i = 0; i < tamanho_pista; i++) {
+    pthread_mutex_destroy(&mutex_pista[i]);
   }
   free(mutex_pista);
+  return;
 }
 
 // void cria_mutex_ciclistas(int num_ciclistas) {
@@ -38,9 +29,9 @@ void destroi_mutex_pista(int tamanho_pista) {
 
 void cria_pista(int tamanho_pista) {
   // Aloca memória para a pista
-  pista = (unsigned int**) malloc(tamanho_pista * sizeof(unsigned int*));
+  pista = (int**) malloc(tamanho_pista * sizeof(int*));
   for (int i = 0; i < 10; i++) {
-    pista[i] = (unsigned int*) malloc(10 * sizeof(unsigned int));
+    pista[i] = (int*) malloc(10 * sizeof(int));
   }
   if (pista == NULL) {
     perror("Erro ao alocar memória para a pista");
@@ -77,7 +68,6 @@ void cria_ciclistas(int num_ciclistas) {
     return;
   }
 }
-
 Ciclista* cria_ciclista(int id) {
   Ciclista* ciclista = (Ciclista*) malloc(sizeof(Ciclista));
   ciclista->id = id;
@@ -102,8 +92,14 @@ void destroi_ciclistas(int num_ciclistas) {
 
 void cria_threads(int num_ciclistas) {
   threads = (pthread_t*) malloc(num_ciclistas * sizeof(pthread_t));
+  if (threads == NULL) {
+    perror("Erro ao alocar memória para as threads");
+    return;
+  }
   for (int i = 0; i < num_ciclistas; i++) {
-    pthread_create(&threads[i], NULL, f_ciclista, (void*)i);
+    ThreadArgs* arg = (ThreadArgs*) malloc(sizeof(ThreadArgs));
+    arg->id = i;
+    pthread_create(&threads[i], NULL, f_ciclista, (void*)arg);
   }
 }
 
@@ -131,8 +127,9 @@ void cria_largada(int num_ciclistas) {
   }
 }
 
-void f_ciclista(void* arg) {
-  int id = (int)arg; // arg é o id do ciclista
+void* f_ciclista(void* arg) {
+  int id = ((ThreadArgs*)arg)->id;
+  free(arg);
   Ciclista* ciclista = ciclistas[id];
   int x = ciclista->posicao_x;
   int y = ciclista->posicao_y;
@@ -162,11 +159,8 @@ void f_ciclista(void* arg) {
     }
 
     // Sorteia a quebra do ciclista
-    if (ciclista->voltas % 6 == 0) {
-      if (quebra_ciclista(id)) {
-        ciclista->quebrou = true;
-        break;
-      }
+    if (ciclista->voltas % 6 == 0 && quebra_ciclista(id)) {
+      break;
     }
 
     pthread_barrier_wait(&barreira_1);
@@ -177,7 +171,8 @@ void f_ciclista(void* arg) {
 }
 
 void atualiza_posicao(int id, int x, int y) {
-  pthread_mutex_lock(&mutex_pista[x][y]);
+  pthread_mutex_lock(&mutex_pista[(x+1)%g_tamanho_pista]);
+  pthread_mutex_lock(&mutex_pista[x]);
 
   Ciclista* ciclista = ciclistas[id];
   
@@ -206,73 +201,51 @@ void atualiza_posicao(int id, int x, int y) {
     ciclista->atualizou_posicao = false;
   }
 
-  pthread_mutex_unlock(&mutex_pista[x][y]);
+  pthread_mutex_unlock(&mutex_pista[x]);
+  pthread_mutex_unlock(&mutex_pista[(x+1)%g_tamanho_pista]);
 
   return;
 }
 
 bool avanca_pra_frente(int id, int x, int y) {
   Ciclista* ciclista = ciclistas[id];
-  bool avancou;
-
-  pthread_mutex_lock(&mutex_pista[x+1][y]);
 
   if (pista[x][y+1] == -1) {
     // Ciclista deixa a posição atual livre
     pista[x][y] = -1;
     // Ciclista avança e ocupa a posição à frente
     pista[x][y+1] = ciclista->id;
-    avancou = true;
+    return true;
   }
-  avancou = false;
 
-  pthread_mutex_unlock(&mutex_pista[x+1][y]);
-
-  return avancou;
+  return false;
 }
 
 bool ultrapassa_por_cima(int id, int x, int y) {
-  pthread_mutex_lock(&mutex_pista[(x+1)%g_tamanho_pista][y+1]);
-
   Ciclista* ciclista = ciclistas[id];
-  bool avancou;
 
   if (pista[(x+1)%g_tamanho_pista][y+1] == -1) {
     // Ciclista deixa a posição atual livre
     pista[x][y] = -1;
     // Ciclista ultrapassa e ocupa a posição à diagonal
-    pthread_mutex_lock(&mutex_pista[(x+1)%g_tamanho_pista][y+1]);
     pista[(x+1)%g_tamanho_pista][y+1] = ciclista->id;
-    pthread_mutex_unlock(&mutex_pista[(x+1)%g_tamanho_pista][y+1]);
-    avancou = true;
+    return true;
   }
-  avancou = false;
 
-  pthread_mutex_unlock(&mutex_pista[(x+1)%g_tamanho_pista][y+1]);
-
-  return avancou;
+  return false;
 }
 
 bool ultrapassa_por_baixo(int id, int x, int y) {
-  pthread_mutex_lock(&mutex_pista[(x+1)%g_tamanho_pista][y-1]);
-
   Ciclista* ciclista = ciclistas[id];
-  bool avancou;
 
   if (pista[(x+1)%g_tamanho_pista][y-1] == -1) {
     // Ciclista deixa a posição atual livre
     pista[x][y] = -1;
     // Ciclista ultrapassa e ocupa a posição à diagonal
-    pthread_mutex_lock(&mutex_pista[(x+1)%g_tamanho_pista][y-1]);
     pista[(x+1)%g_tamanho_pista][y-1] = ciclista->id;
-    pthread_mutex_unlock(&mutex_pista[(x+1)%g_tamanho_pista][y-1]);
-    avancou = true;
+    return true;
   }
-  avancou = false;
-
-  pthread_mutex_unlock(&mutex_pista[(x+1)%g_tamanho_pista][y-1]);
-
-  return avancou;
+  return false;
 }
 
 void atualiza_velocidade(int id) {
@@ -311,17 +284,29 @@ void atualiza_velocidade(int id) {
   return;
 }
 
-bool quebra_ciclista() {
-  if (rand() % 100 < 15) // 15% de chance de quebrar
+bool quebra_ciclista(int id) {
+  if (rand() % 100 < 15) {  // 15% de chance de quebrar
+    ciclistas[id]->quebrou = true;
     return true;
+  }
   return false;
 }
 
-int imprime_corrida(int modo, int* vencedores, int* quebrados) {
+void imprime_corrida(int modo, int* vencedores, int* quebrados) {
   if (modo == 0) { // Modo normal
-
   } else { // Modo debug
     // Imprime a pista
+    for (int i = 0; i < 10; i++) {
+      for (int j = 0; j < 10; j++) {
+        if (pista[i][j] == -1) {
+          printf(".  ");
+        } else {
+          printf("%d ", pista[i][j]);
+        }
+      }
+      printf("\n");
+
+    }
   }
 }
 
@@ -345,15 +330,15 @@ int main(int argc, char *argv[]) {
   } else if (argc == 4) {
     modo = 1; // Modo debug
   } else {
-    printf("Uso: ./%s <d> <k> [-debug] \n", argv[0]);
+    printf("Uso: %s <d> <k> [-debug] \n", argv[0]);
     return 1;
   }
 
   // Inicializa as variáveis globais
-  g_num_ciclistas = argv[2];
-  num_ciclistas = num_na_corrida = argv[2];
-  g_tamanho_pista = argv[3];
-  tamanho_pista = argv[3];
+  g_num_ciclistas = atoi(argv[2]);
+  num_ciclistas = num_na_corrida = atoi(argv[2]);
+  g_tamanho_pista = atoi(argv[3]);
+  tamanho_pista = atoi(argv[3]);
   cria_pista(tamanho_pista);
   cria_ciclistas(num_ciclistas);
   cria_largada(num_ciclistas);
@@ -415,7 +400,6 @@ int main(int argc, char *argv[]) {
   // Libera a memória
   destroi_pista(tamanho_pista);
   destroi_ciclistas(num_ciclistas);
-  // pthread_mutex_destroy(&mutex_pista);
   destroi_mutex_pista(tamanho_pista);
   // destroi_mutex_ciclistas(num_ciclistas);
   free(threads);
