@@ -22,7 +22,7 @@
 \begin{frame}
   \frametitle{Os ciclistas}
   \begin{itemize}
-    \item São $k$ ciclistas na corrida, e portanto $k$ threads rodando a função \texttt{f\_ciclista}.
+    \item Há um array dinâmico global de ciclistas \texttt{ciclistas} com tamanho $k$.
     \item Cada ciclista é uma \texttt{struct} \texttt{Ciclista} com os campos:
     \begin{itemize}
       \item \texttt{int id}: identificador único (de 0 a $k$)
@@ -34,6 +34,17 @@
       \item \texttt{bool na\_corrida}
       \item \texttt{bool atualizou\_posicao}: usado para coordenar se o ciclista deve andar em um ciclo
     \end{itemize}
+  \item Para acessar os ciclistas, utilizamos um mutex \texttt{mutex\_ciclistas}.
+  \end{itemize}
+\end{frame}
+
+\subsection{As threads}
+\begin{frame}{As threads}
+  \begin{itemize}
+    \item Há um array dinâmico global de threads \texttt{threads} com tamanho $k$.
+    \item Cada thread corresponde exatamente a um ciclista.
+    \item As threads são criadas e executam a função \texttt{f\_ciclista(void *arg)}, sendo \texttt{arg} o inteiro identificador do ciclista que corresponde à thread.
+    \item Para que as barreiras de sincronização funcionem, as threads encerram com \texttt{pthread\_exit(NULL)} apenas quando a corrida acaba.
   \end{itemize}
 \end{frame}
 
@@ -75,6 +86,35 @@
       \item O loop principal verifica quem ganhou e quebrou e imprime a situação atual da corrida.
       \item O loop principal sincroniza na \texttt{barreira\_impressao} e, caso exista ciclista na pista, libera as threads para a próxima iteração.
     \end{enumerate}
+  \end{itemize}
+\end{frame}
+
+\subsection{Fim da corrida}
+\begin{frame}{Fim da corrida}
+  \begin{itemize}
+    \item A corrida finaliza apenas quando o último ciclista ganha ou quebra.
+    \item O tempo final de cada ciclista é calculado em segundos.
+  \end{itemize}
+\end{frame}
+
+\subsection{Saídas}
+\begin{frame}
+  \frametitle{Saídas}
+  \begin{itemize}
+    \item Modo debug:
+    \begin{itemize}
+      \item A pista \textbf{inteira} é impressa no terminal a cada tick. Não é recomendado para pistas grandes.
+      \item Para limpar a tela a cada tick, descomente a linha 414 do arquivo \texttt{ep2.c} na função \texttt{imprime\_corrida\_debug()}. Caso contrário, todas as impressões serão normalmente feitas a cada tick.
+      \begin{itemize}
+        \item A linha comentada é \texttt{printf(\textbackslash033[H\textbackslash033[J);}
+      \end{itemize}
+      \item O resultado final é escrito no arquivo \texttt{saida.txt}
+    \end{itemize}
+    \item Modo normal:
+    \begin{itemize}
+      \item Nada é impresso no terminal.
+      \item Todos os resultados de cada volta e final são escritos no arquivo \texttt{saida.txt}
+    \end{itemize}
   \end{itemize}
 \end{frame}
 
