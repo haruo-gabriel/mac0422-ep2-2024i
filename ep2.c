@@ -1,13 +1,21 @@
 #include "ep2.h"
 
+void inicializa_clock() {
+  clock_gettime(CLOCK_MONOTONIC, &inicio);
+}
+
+double get_time() {
+  clock_gettime(CLOCK_MONOTONIC, &agora);
+  double tempo = (agora.tv_sec - inicio.tv_sec) + (double) (agora.tv_nsec - inicio.tv_nsec) / 1e9;
+  return tempo;
+}
+
 void cria_mutexes_barreiras() {
   pthread_mutex_init(&mutex_pista, NULL);
   pthread_mutex_init(&mutex_ciclistas, NULL);
   pthread_mutex_init(&mutex_voltas, NULL);
   pthread_barrier_init(&barreira_ciclistas_andaram, NULL, g_num_ciclistas+1);
   pthread_barrier_init(&barreira_impressao, NULL, g_num_ciclistas+1);
-  pthread_barrier_init(&barreira_3, NULL, g_num_ciclistas+1);
-  return;
 }
 
 void destroi_mutexes_barreiras() {
@@ -16,8 +24,6 @@ void destroi_mutexes_barreiras() {
   pthread_mutex_destroy(&mutex_voltas);
   pthread_barrier_destroy(&barreira_ciclistas_andaram);
   pthread_barrier_destroy(&barreira_impressao);
-  pthread_barrier_destroy(&barreira_3);
-  return;
 }
 
 void cria_pista() {
@@ -76,12 +82,13 @@ Ciclista* cria_ciclista(int id) {
   ciclista->posicao_x = -1;
   ciclista->posicao_y = -1;
   ciclista->colocacao = -1;
+  ciclista->tempo_final = -1;
   ciclista->velocidade = 30; // 30 km/h ou 1m/120ms
   ciclista->quebrou = false;
   ciclista->ganhou = false;
   ciclista->na_corrida = true;
   ciclista->atualizou_posicao = false;
-  ciclista->atualizou_velocidade = false;
+  // ciclista->atualizou_velocidade = false;
 
   return ciclista;
 }
@@ -164,25 +171,17 @@ void* f_ciclista(void* arg) {
       atualiza_velocidade(id);
     }
 
-    // Verifica se o ciclista ganhou
-    if (ciclista->ganhou) {
+    // Verifica se o ciclista ganhou ou quebrou
+    if (ciclista->ganhou ||
+       (ciclista->voltas % 6 == 0 && x == 0 && quebra_ciclista(id)))
+    {
       sai_do_loop = true;
-    }
-    // Verifica se o ciclista quebrou
-    if (ciclista->voltas % 6 == 0 && quebra_ciclista(id)) {
-      ciclista->quebrou = true;
-      sai_do_loop = true;
-    }
-    if (sai_do_loop) {
-      // Tira o ciclista da da pista
-      pthread_mutex_lock(&mutex_pista);
-      pista[x][y] = -1;
-      pthread_mutex_unlock(&mutex_pista);
     }
 
     // printf("%d: Esperando barreira 1\n", id);
     pthread_barrier_wait(&barreira_ciclistas_andaram);
     // printf("%d: Passei da barreira 1\n", id);
+
     // printf("%d: Esperando barreira 2\n", id);
     pthread_barrier_wait(&barreira_impressao);
     // printf("%d: Passei da barreira 2\n", id);
@@ -193,6 +192,7 @@ void* f_ciclista(void* arg) {
     // printf("%d: Esperando barreira 1\n", id);
     pthread_barrier_wait(&barreira_ciclistas_andaram);
     // printf("%d: Passei da barreira 1\n", id);
+
     // printf("%d: Esperando barreira 2\n", id);
     pthread_barrier_wait(&barreira_impressao);
     // printf("%d: Passei da barreira 2\n", id);
@@ -207,115 +207,117 @@ void atualiza_posicao(int id, int x, int y) {
       (ciclista->velocidade == 30 && !ciclista->atualizou_posicao))
   {
     pthread_mutex_lock(&mutex_pista);
-    // Se há um ciclista à frente
-    if (!avanca_pra_frente(id, x, y)) {
-      // Se o ciclista está na borda inferior
-      if (y == 0) {
-        ultrapassa_por_cima(id, x, y);
-      }
-      // Se o ciclista está na borda superior 
-      else if (y == 9) {
-        ultrapassa_por_baixo(id, x, y);
-      }
-      // Se o ciclista está no meio da pista
-      else {
-        // Sorteia se o ciclista vai tentar ultrapassar primeiro por cima ou por baixo
-        if (rand() % 2 == 0) {
-          if (!ultrapassa_por_cima(id, x, y))
-            ultrapassa_por_baixo(id, x, y);
-        }
-        else {
-          if (!ultrapassa_por_baixo(id, x, y)) {
-            ultrapassa_por_cima(id, x, y);
-          }
-        }
-      }
+    int ultrapassa = pode_ultrapassar(id);
+    if (ultrapassa == 1) {
+      avanca_pra_frente(id, x, y);
+    } else if (ultrapassa == 2) {
+      ultrapassa_por_cima(id, x, y);
+    } else if (ultrapassa == 3) {
+      ultrapassa_por_baixo(id, x, y);
     }
     pthread_mutex_unlock(&mutex_pista);
+    ciclista->atualizou_posicao = true;
   }
   else {
     ciclista->atualizou_posicao = false;
   }
 }
 
-bool avanca_pra_frente(int id, int x, int y) {
+int pode_ultrapassar(int id) {
   Ciclista* ciclista = ciclistas[id];
+  int x = ciclista->posicao_x;
+  int y = ciclista->posicao_y;
   int x_prox = (x+1) % g_tamanho_pista;
-  if (pista[x_prox][y] == -1) {
-    // Verifica se o ciclista completou uma volta
-    if (x_prox == 0) {
-      ciclista->voltas++;
-      // Verifica se o ciclista ganhou
-      if (ciclista->voltas == g_num_voltas_completas) {
-        ciclista->ganhou = true;
-        pista[x][y] = -1;
-        ciclista->atualizou_posicao = true;
-        return true;
-      }
-    }
-    // Ciclista deixa a posição atual livre
-    pista[x][y] = -1;
-    // Ciclista avança e ocupa a posição à frente
-    pista[x_prox][y] = id;
-    ciclista->posicao_x = x_prox;
-    ciclista->atualizou_posicao = true;
-    return true;
-  }
-  ciclista->atualizou_posicao = false;
-  return false;
+
+  // Se pode avançar para frente
+  if (pista[x_prox][y] == -1)
+    return 1;
+  // Se pode ultrapassar por cima
+  if (y < 9 && pista[x_prox][y+1] == -1)
+    return 2;
+  // Se pode ultrapassar por baixo
+  if (y > 0 && pista[x_prox][y-1] == -1)
+    return 3;
+  // Se não pode ultrapassar
+  return 0;
 }
 
-bool ultrapassa_por_cima(int id, int x, int y) {
+void avanca_pra_frente(int id, int x, int y) {
+  Ciclista* ciclista = ciclistas[id];
+  int x_prox = (x+1) % g_tamanho_pista;
+  // Verifica se o ciclista completou uma volta
+  if (x_prox == 0) {
+    ciclista->voltas++;
+    // Verifica se o ciclista ganhou
+    if (ciclista->voltas == g_num_voltas_para_ganhar) {
+      ciclista->tempo_final = get_time();
+      ciclista->ganhou = true;
+      pista[x][y] = -1;
+      // ciclista->atualizou_posicao = true;
+      return;
+    }
+  }
+  // Ciclista deixa a posição atual livre
+  pista[x][y] = -1;
+  // Ciclista avança e ocupa a posição à frente
+  pista[x_prox][y] = id;
+  ciclista->posicao_x = x_prox;
+  // ciclista->atualizou_posicao = true;
+}
+
+void ultrapassa_por_cima(int id, int x, int y) {
   // printf("%d: ultrapassa_por_cima\n", id);
   Ciclista* ciclista = ciclistas[id];
   int x_prox = (x+1) % g_tamanho_pista;
-  if (pista[x_prox][y+1] == -1) {
-    // Ciclista deixa a posição atual livre
-    pista[x][y] = -1;
-    // Ciclista ultrapassa e ocupa a posição à diagonal
-    pista[x_prox][y+1] = id;
-    ciclista->posicao_x = x_prox;
-    ciclista->posicao_y = y+1;
-
-    // Verifica se o ciclista completou uma volta
-    if (x_prox == 0) {
-      ciclista->voltas++;
+  // Verifica se o ciclista completou uma volta
+  if (x_prox == 0) {
+    ciclista->voltas++;
+    // Verifica se o ciclista ganhou
+    if (ciclista->voltas == g_num_voltas_para_ganhar) {
+      ciclista->tempo_final = get_time();
+      ciclista->ganhou = true;
+      pista[x][y] = -1;
+      // ciclista->atualizou_posicao = true;
+      return;
     }
-    ciclista->atualizou_posicao = true;
-    return true;
   }
-
-  ciclista->atualizou_posicao = false;
-  return false;
+  // Ciclista deixa a posição atual livre
+  pista[x][y] = -1;
+  // Ciclista avança e ocupa a posição à diagonal superior
+  pista[x_prox][y+1] = id;
+  ciclista->posicao_x = x_prox;
+  ciclista->posicao_y = y+1;
+  // ciclista->atualizou_posicao = true;
 }
 
-bool ultrapassa_por_baixo(int id, int x, int y) {
+void ultrapassa_por_baixo(int id, int x, int y) {
   // printf("%d: ultrapassa_por_baixo\n", id);
   Ciclista* ciclista = ciclistas[id];
   int x_prox = (x+1) % g_tamanho_pista;
-
-  if (pista[x_prox][y-1] == -1) {
-    // Ciclista deixa a posição atual livre
-    pista[x][y] = -1;
-    // Ciclista ultrapassa e ocupa a posição à diagonal
-    pista[x_prox][y-1] = id;
-    ciclista->posicao_x = x_prox;
-    ciclista->posicao_y = y-1;
-
-    // Verifica se o ciclista completou uma volta
-    if (x_prox == 0) {
-      ciclista->voltas++;
+  // Verifica se o ciclista completou uma volta
+  if (x_prox == 0) {
+    ciclista->voltas++;
+    // Verifica se o ciclista ganhou
+    if (ciclista->voltas == g_num_voltas_para_ganhar) {
+      ciclista->tempo_final = get_time();
+      ciclista->ganhou = true;
+      pista[x][y] = -1;
+      // ciclista->atualizou_posicao = true;
+      return;
     }
-    ciclista->atualizou_posicao = true;
-    return true;
   }
-    ciclista->atualizou_posicao = false;
-  return false;
+  // Ciclista deixa a posição atual livre
+  pista[x][y] = -1;
+  // Ciclista avança e ocupa a posição à diagonal superior
+  pista[x_prox][y-1] = id;
+  ciclista->posicao_x = x_prox;
+  ciclista->posicao_y = y-1;
+  // ciclista->atualizou_posicao = true;
 }
 
 void atualiza_velocidade(int id) {
   Ciclista* ciclista = ciclistas[id];
-  int x, y;
+  // int x, y;
 
   pthread_mutex_lock(&mutex_ciclistas);
 
@@ -336,15 +338,16 @@ void atualiza_velocidade(int id) {
 
   // Atualiza a velocidade de todos os ciclistas que estão
   // imediatamente atrás e que não podem ultrapassar
-  // if (ciclista->velocidade == 30) {
-  //   x = g_tamanho_pista + (ciclista->posicao_x-1);
-  //   printf("x=%d\n", x);
-  //   y = ciclista->posicao_y;
-  //   while (pista[x][y] != -1) {
+  // pthread_mutex_lock(&mutex_pista);
+  // x = g_tamanho_pista-1;
+  // y = ciclista->posicao_y;
+  // while (pista[x][y] != -1) {
+  //   if (!pode_ultrapassar(pista[x][y])) {
   //     ciclistas[pista[x][y]]->velocidade = 30;
-  //     x = g_tamanho_pista + (x-1);
   //   }
+  //   x--;
   // }
+  // pthread_mutex_unlock(&mutex_pista);
 
   pthread_mutex_unlock(&mutex_ciclistas);
 
@@ -352,59 +355,96 @@ void atualiza_velocidade(int id) {
 }
 
 bool quebra_ciclista(int id) {
-  if (rand() % 100 < 15) {  // 15% de chance de quebrar
+  Ciclista* ciclista = ciclistas[id];
+  int x = ciclista->posicao_x;
+  int y = ciclista->posicao_y;
+  if (rand() % 100 < 14) {  // 15% de chance de quebrar
     ciclistas[id]->quebrou = true;
+    pista[x][y] = -1;
+    g_num_quebrados++;
     return true;
   }
   return false;
 }
 
-void imprime_corrida(int modo, int* vencedores, int* quebrados) {
-  if (modo == 0) { // Modo normal
-  } else { // Modo debug
-    imprime_pista();
-    printf("\n");
-    // Imprime variáveis globais
-    printf("g_num_voltas_completas: %d\n", g_num_voltas_completas);
-    printf("g_num_ciclistas: %d\n", g_num_ciclistas); 
-    printf("g_num_na_corrida: %d\n", g_num_na_corrida);
-    printf("g_num_vencedores: %d\n", g_num_vencedores);
-    printf("g_num_quebrados: %d\n", g_num_quebrados);
-    printf("\n");
-    // Imprime as informações dos ciclistas
-    for (int i = 0; i < g_num_ciclistas; i++) {
-      Ciclista* ciclista = ciclistas[i];
-      if (ciclista->na_corrida) {
-        printf("Ciclista %d: x=%2d, y=%2d, voltas=%d, velocidade=%d\n",
-              ciclista->id, ciclista->posicao_x, ciclista->posicao_y,
-              ciclista->voltas, ciclista->velocidade);
-      }
-    }
-    printf("\n");
-    // Imprime os vencedores e quebrados
-    for (int i = 0; i < g_num_ciclistas; i++) {
-      if (vencedores[i] == 1) {
-        printf("Ciclista %d ganhou na colocação %d.\n", i, ciclistas[i]->colocacao);
-      } else if (quebrados[i] == 1) {
-        printf("Ciclista %d quebrou na volta %d.\n", i, ciclistas[i]->voltas);
-      }
-    }
-    // clear terminal screen
-    // printf("\033[H\033[J");
-    printf("-----------------------------------------------------------------\n");
-  }
+void imprime_corrida_debug(int* vencedores, int* quebrados) {
+  imprime_pista();
+  printf("\n");
+  // Imprime variáveis globais
+  printf("g_num_voltas_para_ganhar: %d   ", g_num_voltas_para_ganhar);
+  printf("g_num_ciclistas: %d   ", g_num_ciclistas); 
+  printf("g_num_na_corrida: %d   ", g_num_na_corrida);
+  printf("g_num_vencedores: %d   ", g_num_vencedores);
+  printf("g_num_quebrados: %d\n", g_num_quebrados);
+  printf("\n");
 
-  return;
+  // Imprime as informações dos ciclistas
+  for (int i = 0; i < g_num_ciclistas; i++) {
+    Ciclista* ciclista = ciclistas[i];
+    if (ciclista->na_corrida) {
+      printf("%3d: x=%2d, y=%2d, voltas=%2d, vel=%2d    ",
+            ciclista->id, ciclista->posicao_x, ciclista->posicao_y,
+            ciclista->voltas, ciclista->velocidade);
+    } else {
+      if (ciclista->ganhou) {
+        printf("%3d: GANHOU NA COLOCAÇÃO %d            ", ciclista->id, ciclista->colocacao);
+      } else if (ciclista->quebrou) {
+        printf("%3d: QUEBROU NA VOLTA %d               ", ciclista->id, ciclista->voltas);
+      }
+    }
+    if ((i+1) % 4 == 0)
+      printf("\n");
+  }
+  printf("\n");
+
+  // Imprime os vencedores e quebrados
+  // for (int i = 0; i < g_num_ciclistas; i++) {
+  //   if (vencedores[i] == 1) {
+  //     printf("Ciclista %d ganhou na colocação %d.\n", i, ciclistas[i]->colocacao);
+  //   } else if (quebrados[i] == 1) {
+  //     printf("Ciclista %d quebrou na volta %d.\n", i, ciclistas[i]->voltas);
+  //   }
+  // }
+  // clear terminal screen
+  printf("\033[H\033[J");
+  // printf("-----------------------------------------------------------------\n");
+}
+
+void imprime_corrida() {
+  fprintf(saida, "\nVOLTA %d\n", g_num_voltas);
+  // Imprime a posição de todos os ciclistas
+  for (int i = 0; i < g_num_ciclistas; i++) {
+    Ciclista* ciclista = ciclistas[i];
+    if (ciclista->na_corrida) {
+      fprintf(saida, "Ciclista %3d: metro %3d, raia %2d\n", ciclista->id, ciclista->posicao_x, ciclista->posicao_y);
+    }
+  }
+}
+
+void imprime_final_corrida() {
+  // Executa após terminar a corrida
+  fprintf(saida, "\nRESULTADO FINAL\n");
+  for (int i = 0; i < g_num_ciclistas; i++) {
+    Ciclista* ciclista = ciclistas[i];
+    // Para os vencedores, imprime a colocação e o instante de tempo
+    if (ciclista->ganhou) {
+      fprintf(saida, "Ciclista %3d: ganhou na colocação %d no instante de tempo %.2f segundos\n",
+              ciclista->id, ciclista->colocacao, ciclista->tempo_final);
+    // Para os quebrados, imprime a volta que quebraram
+    } else if (ciclista->quebrou) {
+      fprintf(saida, "Ciclista %3d: quebrou na volta %d\n", ciclista->id, ciclista->voltas);
+    }
+  }
 }
 
 void imprime_pista() {
   pthread_mutex_lock(&mutex_pista);
-  for (int j = 0; j < 10; j++) {
+  for (int j = 9; j >= 0; j--) {
     for (int i = 0; i < g_tamanho_pista; i++) {
       if (pista[i][j] == -1) {
-        printf("  .");
+        printf("   .");
       } else {
-        printf("%3d", pista[i][j]);
+        printf("%4d", pista[i][j]);
       }
       // printf("%3d", pista[i][j]);
     }
@@ -418,6 +458,11 @@ int main(int argc, char *argv[]) {
   Ciclista* ciclista;
   bool sai_do_loop = false;
   srand(time(NULL));
+  saida = fopen("saida.txt", "w");
+  if (saida == NULL) {
+    printf("Erro ao abrir o arquivo de saída.\n");
+    return 1;
+  }
 
   // Manipula a entrada
   if (argc == 3) {
@@ -433,7 +478,8 @@ int main(int argc, char *argv[]) {
   g_tamanho_pista = atoi(argv[1]);
   g_num_ciclistas = g_num_na_corrida = atoi(argv[2]);
   g_num_vencedores = g_num_quebrados = 0;
-  g_num_voltas_completas = 2;
+  g_num_voltas_para_ganhar = 2;
+  g_num_voltas = 0;
   cria_mutexes_barreiras();
   cria_ciclistas();
   cria_pista();
@@ -444,18 +490,34 @@ int main(int argc, char *argv[]) {
   int* vencedores = (int*) malloc(g_num_ciclistas * sizeof(int));
   int* quebrados = (int*) malloc(g_num_ciclistas *sizeof(int));
 
+  // Inicializa o clock
+  inicializa_clock();
+  bool imprime = false;
+  
   // Loop principal
   while (!sai_do_loop) {
     // printf("m: to no loop\n");
-    // Sincroniza os ciclistas que já andaram
+
+    // A main espera os ciclistas andarem
+
     // printf("m: Esperando na barreira 1\n");
     pthread_barrier_wait(&barreira_ciclistas_andaram);
     // printf("m: Passei da barreira 1\n");
 
     // Avança um tick do clock (60ms)
-    // usleep(60000);
-    usleep(90000);
+    usleep(60000);
 
+    // Atualiza o número de voltas da corrida
+    for (int i = 0; i < g_num_ciclistas; i++) {
+      ciclista = ciclistas[i];
+      if (ciclista->voltas == g_num_voltas+1) {
+        pthread_mutex_lock(&mutex_voltas);
+        g_num_voltas++;
+        pthread_mutex_unlock(&mutex_voltas);
+        imprime = true;
+        break;
+      }
+    }
     // Verifica se alguém ganhou ou quebrou
     for (int i = 0; i < g_num_ciclistas; i++) {
       vencedores[i] = 0; quebrados[i] = 0;
@@ -477,19 +539,24 @@ int main(int argc, char *argv[]) {
         }
       }
     }
+    // Atualiza o número de voltas necessárias para ganhar a corrida
     for (int i = 0; i < g_num_ciclistas; i++) {
       if (vencedores[i] == 1) {
         pthread_mutex_lock(&mutex_voltas);
-        g_num_voltas_completas = g_num_voltas_completas + 2;
+        g_num_voltas_para_ganhar = g_num_voltas_para_ganhar + 2;
         pthread_mutex_unlock(&mutex_voltas);
         break;
       }
     }
 
-
     // Processa os dados dos vencedores e quebrados
     // e imprime as informações na tela
-    imprime_corrida(modo, vencedores, quebrados);
+    if (modo == 1)
+      imprime_corrida_debug(vencedores, quebrados);
+    else if (imprime) {
+      imprime_corrida();
+      imprime = false;
+    }
 
     // Reseta os dados dos vencedores e quebrados
     for (int i = 0; i < g_num_ciclistas; i++) {
@@ -508,6 +575,9 @@ int main(int argc, char *argv[]) {
     // printf("m: Passei da barreira 2\n");
   }
 
+  imprime_final_corrida();
+  printf("Tempo total da corrida: %.2f segundos\n", get_time());
+
   // Libera a memória
   destroi_threads();
   destroi_mutexes_barreiras();
@@ -516,6 +586,8 @@ int main(int argc, char *argv[]) {
 
   free(vencedores);
   free(quebrados);
+
+  fclose(saida);
 
   return 0;
 }

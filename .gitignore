@@ -1,1 +1,6 @@
 *.out
+# Ignore Latex related files
+*.nav
+*.snm
+*.toc
+*.synctex.gz
